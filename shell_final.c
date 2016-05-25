@@ -111,10 +111,6 @@ void parsing() {
 	commandeParse[nbArg] = (char *) malloc (sizeof(char));
 	commandeParse[nbArg] = NULL;
 
-	int i;
-	for(i=0; i < nbArg; i++){
-		printf("buffer : %s \n",commandeParse[i]);
-	}
 	addCommandeHistory();
 	testCommande();	
 }
