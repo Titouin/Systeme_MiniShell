@@ -1,0 +1,15 @@
+BUFFER : ls -a 
+buffer : ls 
+buffer : -a 
+.
+..
+boum
+commandeCP
+commandeCP.c
+fichierHistory.txt
+.git
+.gitignore
+red
+redirection
+shell_final.c
+test

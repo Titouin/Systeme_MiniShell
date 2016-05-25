@@ -5,6 +5,7 @@
 #include <string.h> /* Fonction sur les string ex: STRCPY */
 #include <fcntl.h> /* OPEN */
 #include <errno.h> /* EAGAIN - EINTR */
+#include <sys/stat.h>
 
 void inviteCommande();
 char lireCommande();
@@ -18,6 +19,7 @@ void commandeTouch();
 void commandeCat();
 void commandeCP();
 void redirection();
+void commandePipe(int placePipe);
 
 char * commande;
 char ** commandeParse;
@@ -87,7 +89,7 @@ void parsing() {
 	buffer = strtok (commande, " ");
 	
 	/* Alloue la mémoire au tableau 2D */
-	commandeParse = (char**) malloc (sizeof(char*));
+	commandeParse = (char**) malloc (200 * sizeof(char*));
 
 	/* Boucle sur tous les mots de la ligne de commande */
 	while ( buffer != NULL ) {
@@ -100,15 +102,19 @@ void parsing() {
 		buffer = strtok(NULL, " " );
 		/* Ajoute de l'espace pour un pointeur de char si ce n'est pas le dernier mot */
 		if ( buffer != NULL ) {
-			 commandeParse = realloc ( commandeParse, sizeof(commandeParse) + sizeof(buffer));
+			// commandeParse = realloc ( commandeParse, sizeof(commandeParse) + sizeof(buffer));
 		}
 	}
 	free(buffer);
 
-	commandeParse = realloc ( commandeParse, sizeof(char*));
+	//commandeParse = realloc ( commandeParse, sizeof(char*));
 	commandeParse[nbArg] = (char *) malloc (sizeof(char));
 	commandeParse[nbArg] = NULL;
 
+	int i;
+	for(i=0; i < nbArg; i++){
+		printf("buffer : %s \n",commandeParse[i]);
+	}
 	addCommandeHistory();
 	testCommande();	
 }
@@ -120,6 +126,15 @@ void testCommande(){
 	for(i=0, placeFichier=0; i<nbArg; i++, placeFichier++){
 		if ( !strcmp(commandeParse[i], ">" ) ) { /* Test si user à rediriger la sortie */
 			redirection(++placeFichier);
+			return;
+		}
+	}
+
+	// Test si l'utilisateur a pipe la sortie 
+	int placePipe;
+	for(placePipe=0; placePipe<nbArg; placePipe++){
+		if ( !strcmp(commandeParse[placePipe], "|" ) ) { /* Test si user à rediriger la sortie */
+			commandePipe(placePipe);
 			return;
 		}
 	}
@@ -175,7 +190,7 @@ void executionCommande() {
 				//Test s
 				if(!access(buffer,X_OK)){
 					/* Utilisation de execv car on fourni le chemin de la commande */	
-					execv		(buffer,commandeParse);
+					execv (buffer,commandeParse);
 					fprintf(stderr,"ERREUR : EXEC processus %d. \n", getpid());
 					exit(0);
 
@@ -395,6 +410,7 @@ void redirection(int placeFichier){
 		fprintf(stderr,"ERREUR: Ouverture fichier %s. \n", commandeParse[placeFichier]);
 		return;
 	} else {
+
 		// Sauvegarde la sortie standard
 		int oldout = dup(1);		
 		dup2(descFichierCible,1);
@@ -405,20 +421,240 @@ void redirection(int placeFichier){
 		buffer = (char*) malloc (1024 * sizeof(char));
 		strcpy(buffer,commandeParse[0]);
 		int i;
-		printf("PlaceFichier %d \n", placeFichier);
-		for(i=0; i< (placeFichier-1); i++){
-			fprintf(stdout,"Buffer : %s \n", buffer);
+		for(i=1; i< (placeFichier-1); i++){
 			strcat(buffer," ");
-			printf("CommandeParse : %s \n", commandeParse[i]);
 			strcat(buffer,commandeParse[i]);
 		}
 		commande = malloc(sizeof(buffer));			
 		strcpy(commande, buffer);
 		parsing();
+
 		dup2(oldout,1);
 		close(oldout);
 	
 		free(buffer);
 	}
 }
+
+void commandePipe(int placePipe){
+
+	int descripteur[2];
+	if(pipe(descripteur) != 0){
+		fprintf(stderr, "Erreur de création du tube.\n");
+        	return EXIT_FAILURE;
+    	}
+
+	// On exécute la commande du coup on supprime la redirection
+	char *commande1 = NULL, *commande2 = NULL;
+	commande1 = (char*) malloc (1024 * sizeof(char));
+	commande2 = (char*) malloc (1024 * sizeof(char));
+	strcpy(commande1,commandeParse[0]);
+	strcpy(commande2,commandeParse[++placePipe]);
+	int i;
+	for(i=1; i< (placePipe); i++){
+		strcat(commande1," ");
+		strcat(commande2," ");
+		strcat(commande1,commandeParse[i]);
+		strcat(commande2,commandeParse[placePipe +i + 1]);
+	}
+
+	pid_t idpr1, idpr2;
+	int cptRendu;
+	idpr1 = fork();
+
+	/* Test si fork reussi */
+	if ( idpr1 < 0 )
+	{
+		fprintf(stderr, "ERREUR : FORK processus %d. \n ", getpid());
+		exit (1);
+	}
+	/* Code du processus fils */
+	if ( idpr1 == 0 )
+	{	
+		
+		dup2(descripteur[0],1);
+
+		char **bufferParse;
+		char * buffer;
+		nbArg = 0;
+		buffer = (char* ) malloc (sizeof(commande1));
+
+		/* Recupere le string jusqu'au premiere espace */
+		buffer = strtok (commande1, " ");
+	
+		/* Alloue la mémoire au tableau 2D */
+		bufferParse = (char**) malloc (200 * sizeof(char*));
+
+		/* Boucle sur tous les mots de la ligne de commande */
+		while ( buffer != NULL ) {
+			/* Alloue de la mémoire pour ajouter le mots */
+			bufferParse[nbArg] = (char *) malloc (sizeof(buffer));
+			/* Ajoute l'élément */
+			strcpy(bufferParse[nbArg], buffer);
+			nbArg++;
+			/* Recupere le string jusqu'au premiere espace */
+			buffer = strtok(NULL, " " );
+		}
+		free(buffer);
+
+		bufferParse[nbArg] = (char *) malloc (sizeof(char));
+		bufferParse[nbArg] = NULL;
+
+
+
+		// On récupére tout les dossiers d'environnemt qui peuvent contenir les commandes
+		char *path = getenv("PATH");
+		
+		int tailleEnv, i =0;
+		char * bufferB;
+		buffer = calloc(1024,sizeof(char));
+		
+		
+		for(tailleEnv = 0; tailleEnv < strlen(path); tailleEnv++){
+			// On boucle sur les carectéres jusqu'a ce qu'on arrive au délimiteur 
+			if(path[tailleEnv]==':'){
+				// Ajoute la commande a la suite du path
+				strcat(bufferB, "/");
+				strcat(bufferB, bufferParse[0]);
+				//Test s
+				if(!access(bufferB,X_OK)){
+					/* Utilisation de execv car on fourni le chemin de la commande */	
+					execv (bufferB,bufferParse);
+					fprintf(stderr,"ERREUR : EXEC processus %d. \n", getpid());
+					exit(0);
+
+				} else {
+					free(bufferB);
+					bufferB = calloc(4096,sizeof(char));
+				}
+				// On réinitialise le compteur
+				i=0;
+			} else /* Insere le path au buffer */
+			{
+				bufferB[i++] = path[tailleEnv];
+			}
+		}
+		free(bufferB);
+		fprintf(stderr,"ERREUR : Commande introuvable. \n");
+		exit(0);
+	}
+
+	idpr2 = fork();
+	/* Test si fork reussi */
+	if ( idpr2 < 0 )
+	{
+		fprintf(stderr, "ERREUR : FORK processus %d. \n ", getpid());
+		exit (1);
+	}
+
+	if ( idpr2 == 0 )
+	{	
+		dup2(descripteur[1],0);
+
+		char **bufferParse;
+		char * buffer;
+		nbArg = 0;
+		buffer = (char* ) malloc (sizeof(commande2));
+
+		/* Recupere le string jusqu'au premiere espace */
+		buffer = strtok (commande2, " ");
+	
+		/* Alloue la mémoire au tableau 2D */
+		bufferParse = (char**) malloc (200 * sizeof(char*));
+
+		/* Boucle sur tous les mots de la ligne de commande */
+		while ( buffer != NULL ) {
+			/* Alloue de la mémoire pour ajouter le mots */
+			bufferParse[nbArg] = (char *) malloc (sizeof(buffer));
+			/* Ajoute l'élément */
+			strcpy(bufferParse[nbArg], buffer);
+			nbArg++;
+			/* Recupere le string jusqu'au premiere espace */
+			buffer = strtok(NULL, " " );
+		}
+		free(buffer);
+
+		bufferParse[nbArg] = (char *) malloc (sizeof(char));
+		bufferParse[nbArg] = NULL;
+
+
+		// On récupére tout les dossiers d'environnemt qui peuvent contenir les commandes
+		char *path = getenv("PATH");
+		
+		int tailleEnv, i =0;
+		char * bufferB;
+		bufferB = calloc(1024,sizeof(char));
+		
+		
+		for(tailleEnv = 0; tailleEnv < strlen(path); tailleEnv++){
+			// On boucle sur les carectéres jusqu'a ce qu'on arrive au délimiteur 
+			if(path[tailleEnv]==':'){
+				// Ajoute la commande a la suite du path
+				strcat(bufferB, "/");
+				strcat(bufferB, commandeParse[1]);
+				//Test s
+				if(!access(bufferB,X_OK)){
+					/* Utilisation de execv car on fourni le chemin de la commande */	
+					execv (bufferB,commandeParse);
+					fprintf(stderr,"ERREUR : EXEC processus %d. \n", getpid());
+					exit(0);
+
+				} else {
+					free(bufferB);
+					bufferB = calloc(4096,sizeof(char));
+				}
+				// On réinitialise le compteur
+				i=0;
+			} else /* Insere le path au buffer */
+			{
+				bufferB[i++] = path[tailleEnv];
+			}
+		}
+		free(bufferB);
+		fprintf(stderr,"ERREUR : Commande introuvable. \n");
+		exit(0);
+	}
+
+	waitpid(idpr1, &cptRendu, WCONTINUED );
+	waitpid(idpr2, &cptRendu, WCONTINUED );
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
